@@ -22,7 +22,7 @@ const COMMON_PROMPT_INSTRUCTIONS = `
     # [Chinese Video Title]
 
     ## Executive Summary / 内容摘要
-    [Concise English Summary of the video content]
+    [Concise English Summary. If Music Video: Story of the video & Song Meaning.]
     
     [Chinese Translation]
 
@@ -32,7 +32,7 @@ const COMMON_PROMPT_INSTRUCTIONS = `
     * **[English Point]** - [Chinese Translation]
 
     ## Detailed Overview / 详细概览
-    [English explanation of the content]
+    [English explanation of the content/plot]
     
     [Chinese Translation]
 `;
@@ -61,45 +61,44 @@ export async function summarizeText(text: string): Promise<SummaryResult> {
   }
 }
 
-export async function summarizeVideo(videoUrl: string): Promise<SummaryResult> {
+export async function summarizeVideo(videoUrl: string, videoTitle?: string, authorName?: string): Promise<SummaryResult> {
   // Robust regex to extract YouTube Video ID
   const videoIdMatch = videoUrl.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/);
   const videoId = videoIdMatch ? videoIdMatch[1] : null;
   
-  // Improved search strategy: 
-  // 1. Full URL is often the best single token to find the specific page.
-  // 2. "site:youtube.com" + ID is very specific.
-  // 3. Keywords like "transcript" help hint the intent.
-  const searchQueries = videoId 
-    ? [
-        videoUrl,
-        `site:youtube.com "${videoId}"`,
-        `"${videoId}" video transcript`,
-        `"${videoId}" youtube`
-      ]
-    : [videoUrl, "youtube video summary"];
+  // High Quality Search Queries
+  // If we have the Title (from oEmbed), we search for the specific content topic.
+  const searchQueries = [];
+  
+  if (videoTitle) {
+      searchQueries.push(`"${videoTitle}" youtube video summary`);
+      searchQueries.push(`"${videoTitle}" ${authorName || ''} lyrics meaning plot`);
+      searchQueries.push(`"${videoTitle}" review analysis`);
+  } else if (videoId) {
+      searchQueries.push(`site:youtube.com "${videoId}"`);
+      searchQueries.push(`"${videoId}" video content`);
+  }
+  searchQueries.push(videoUrl);
 
   const prompt = `
-    You are a professional research assistant.
+    You are an expert video content analyst.
     
     TARGET VIDEO:
     URL: ${videoUrl}
     ${videoId ? `ID: ${videoId}` : ''}
+    ${videoTitle ? `TITLE: "${videoTitle}"` : ''}
+    ${authorName ? `CHANNEL/ARTIST: "${authorName}"` : ''}
     
-    GOAL: Summarize the content of the YouTube video found at this URL.
+    TASK: Generate a comprehensive summary document of the video content.
     
-    STRICT INSTRUCTIONS:
-    1.  **SEARCH & IDENTIFY**: 
-        - Use the 'googleSearch' tool to gather information.
-        - Prioritize finding the **Video Title**, **Channel Name**, and **Description**.
-        - Look for transcript fragments, captions, or detailed reviews if the video page itself is not fully readable.
-
-    2.  **EXTRACT & SYNTHESIZE**:
-        - Synthesize a summary from the search results.
-        - **VERIFICATION**: Ensure the summary matches the video identified by the ID/URL.
-        - **FALLBACK**: If you cannot find a full transcript, use the video description, snippets, and any external coverage (reviews, blogs) to construct the best possible summary. 
-        - Explicitly state if the summary is based on limited metadata (e.g., "Based on the video title and description...").
-        - **DO NOT** return an error unless you absolutely cannot find ANY trace of the video existence.
+    CRITICAL INSTRUCTION - CONTENT RECOGNITION:
+    1.  **SEARCH**: Use the 'googleSearch' tool to gather details. Queries: ${searchQueries.join(', ')}
+    2.  **VERIFY TITLE**: 
+        ${videoTitle ? `We know the video title is "${videoTitle}". ensure your summary matches this specific topic.` : 'First, identify the exact video title from the search results.'}
+    3.  **HANDLE CONTENT TYPES**:
+        - **Music Video (MV)**: If the video is a song (e.g., Jay Chou, Pop Music), you **MUST** summarize the **Story/Plot told in the visual music video** AND the **Meaning/Lyrics** of the song. Do not complain about missing transcripts.
+        - **Vlog/News/Tech**: Summarize the spoken content and visual demonstrations.
+    4.  **FALLBACK**: If you find the video title/artist in search results, use that information to construct the summary even if you cannot "watch" the video directly.
 
     ${COMMON_PROMPT_INSTRUCTIONS}
   `;
@@ -115,13 +114,13 @@ export async function summarizeVideo(videoUrl: string): Promise<SummaryResult> {
 
     const text = response.text || "No summary generated.";
 
-    // Check for "I can't" responses which indicate failure despite instructions
+    // Check for failure patterns
     const lowerText = text.toLowerCase();
-    if (text.length < 100 && (lowerText.includes("unable to") || lowerText.includes("sorry") || lowerText.includes("cannot find"))) {
-         throw new Error("Unable to identify the video. It might be private, deleted, or valid search results were not found.");
+    if (lowerText.includes("error: video_not_found") || (lowerText.includes("unable to") && text.length < 100)) {
+         throw new Error("Unable to identify the video content. It might be private or blocked.");
     }
     
-    // Extract sources from grounding metadata
+    // Extract sources
     const chunks = (response.candidates?.[0]?.groundingMetadata?.groundingChunks || []) as any[];
     const sources: string[] = chunks
       .map((chunk: any) => chunk.web?.uri)
@@ -132,9 +131,6 @@ export async function summarizeVideo(videoUrl: string): Promise<SummaryResult> {
     return { text, sources: uniqueSources };
   } catch (error: any) {
     console.error("Error calling Gemini API:", error);
-    if (error.message.includes("Unable to identify")) {
-        throw error;
-    }
     throw new Error(error.message || "The AI service failed to generate a summary.");
   }
 }

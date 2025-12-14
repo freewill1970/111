@@ -4,6 +4,7 @@ import { URLInput } from './components/URLInput';
 import { SummaryDisplay } from './components/SummaryDisplay';
 import { Loader } from './components/Loader';
 import { summarizeVideo, summarizeText } from './services/geminiService';
+import { fetchVideoMetadata } from './services/oembedService';
 import { sampleTranscript } from './constants';
 
 const App: React.FC = () => {
@@ -11,6 +12,7 @@ const App: React.FC = () => {
   const [sources, setSources] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [detectedTitle, setDetectedTitle] = useState<string | null>(null);
 
   const handleSummarize = useCallback(async (url: string) => {
     // Enhanced YouTube URL validation (supports mobile links)
@@ -24,14 +26,31 @@ const App: React.FC = () => {
     setError(null);
     setSummary('');
     setSources([]);
+    setDetectedTitle(null);
 
     try {
-      const result = await summarizeVideo(url);
+      // Step 1: Attempt to fetch metadata (Title) to ground the AI
+      let title: string | undefined;
+      let author: string | undefined;
+      
+      try {
+        const metadata = await fetchVideoMetadata(url);
+        if (metadata) {
+          title = metadata.title;
+          author = metadata.author_name;
+          setDetectedTitle(`${metadata.title} (${metadata.author_name})`);
+        }
+      } catch (err) {
+        console.warn("Could not fetch metadata, proceeding with raw URL", err);
+      }
+
+      // Step 2: Generate Summary using the specific title if available
+      const result = await summarizeVideo(url, title, author);
       setSummary(result.text);
       setSources(result.sources);
     } catch (e: any) {
       console.error(e);
-      setError(e.message || 'Failed to generate summary. The video might be private, very new, or inaccessible.');
+      setError(e.message || 'Failed to generate summary. The video might be private, unlisted, or search engines haven\'t indexed it yet.');
     } finally {
       setIsLoading(false);
     }
@@ -42,6 +61,7 @@ const App: React.FC = () => {
     setError(null);
     setSummary('');
     setSources([]);
+    setDetectedTitle("Sample: Stellar Phone X Review");
 
     try {
       // Use the sample transcript from constants
@@ -83,13 +103,16 @@ const App: React.FC = () => {
 
           {error && (
             <div className="mt-6 p-4 bg-red-900/50 text-red-300 border border-red-700 rounded-lg text-center animate-fade-in">
-              {error}
+              <p className="font-semibold">Generation Failed</p>
+              <p className="text-sm mt-1 opacity-90">{error}</p>
             </div>
           )}
           {isLoading && (
             <div className="flex flex-col items-center justify-center mt-10">
               <Loader />
-              <p className="mt-4 text-lg text-gray-400 animate-pulse">Researching video content...</p>
+              <p className="mt-4 text-lg text-gray-400 animate-pulse">
+                {detectedTitle ? `Analyzing: ${detectedTitle}` : 'Searching and analyzing content...'}
+              </p>
             </div>
           )}
           {summary && !isLoading && (
