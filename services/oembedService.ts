@@ -7,10 +7,13 @@ export interface VideoMetadata {
 
 export async function fetchVideoMetadata(url: string): Promise<VideoMetadata | null> {
   try {
-    // specific logic for mobile youtube links to ensure oembed works
-    const cleanUrl = url.replace('m.youtube.com', 'www.youtube.com');
+    // 1. Normalize URL for noembed (handle m.youtube and youtu.be)
+    let cleanUrl = url;
+    if (url.includes('m.youtube.com')) {
+        cleanUrl = url.replace('m.youtube.com', 'www.youtube.com');
+    }
     
-    // Using noembed.com as a public CORS-friendly proxy for YouTube oEmbed
+    // 2. Fetch from noembed
     const response = await fetch(`https://noembed.com/embed?url=${encodeURIComponent(cleanUrl)}`);
     const data = await response.json();
     

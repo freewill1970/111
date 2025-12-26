@@ -1,4 +1,5 @@
-import { GoogleGenAI } from "@google/genai";
+
+import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 
 if (!process.env.API_KEY) {
     throw new Error("API_KEY environment variable not set");
@@ -12,27 +13,39 @@ export interface SummaryResult {
 }
 
 const COMMON_PROMPT_INSTRUCTIONS = `
-    3.  **FORMAT (BILINGUAL)**:
-        - Output strictly in **English** followed by **Chinese**.
-        - Use Markdown.
+    FORMAT:
+    - Markdown.
+    - English section followed immediately by its Chinese translation for every block.
+    - Title matches the video.
 
-    OUTPUT TEMPLATE:
-
-    # [English Video Title]
-    # [Chinese Video Title]
-
-    ## Executive Summary / 内容摘要
-    [Concise English Summary. If Music Video: Story of the video & Song Meaning.]
+    STRUCTURE:
+    # [Video Title]
+    # [Chinese Title]
     
+    ## 🎬 Visual & Content Summary / 视觉与内容概要
+    [Detailed paragraph (approx 150 words).
+    - If this is a Music Video, describe the Visual Plot/Story.
+    - If Talk/Review/News: Summarize the main arguments and conclusions.]
+
     [Chinese Translation]
 
-    ## Key Highlights / 关键亮点
-    * **[English Point]** - [Chinese Translation]
-    * **[English Point]** - [Chinese Translation]
-    * **[English Point]** - [Chinese Translation]
+    ## 🗝️ Key Details / 核心细节
+    * **[Point 1]** - [Chinese Translation]
+    * **[Point 2]** - [Chinese Translation]
+    * **[Point 3]** - [Chinese Translation]
+    * **[Point 4]** - [Chinese Translation]
+    * **[Point 5]** - [Chinese Translation]
 
-    ## Detailed Overview / 详细概览
-    [English explanation of the content/plot]
+    ## 📜 Detailed Content Record / 详细内容实录
+    [This is a new, extremely detailed section. Reconstruct the video's content chronologically. 
+    Provide a comprehensive "pseudo-transcript" or narrative record that covers all major sections, 
+    demonstrations, and spoken points in the video. 
+    Format this as a series of detailed paragraphs or a long bulleted list.]
+
+    [Chinese Translation of the Detailed Content Record - provide a high-fidelity translation.]
+
+    ## 💡 Deep Analysis / 深度解析
+    [Paragraph: Cultural context, technical breakdown, or expert opinion.]
     
     [Chinese Translation]
 `;
@@ -44,14 +57,14 @@ export async function summarizeText(text: string): Promise<SummaryResult> {
     SOURCE TEXT (TRANSCRIPT/CONTENT):
     ${text}
     
-    GOAL: Summarize the provided text as if it were a video transcript.
+    GOAL: Provide a detailed record and summary of the provided text.
     
     ${COMMON_PROMPT_INSTRUCTIONS}
   `;
 
   try {
     const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3-pro-preview',
         contents: prompt,
     });
     return { text: response.text || "No summary generated.", sources: ["Provided Transcript"] };
@@ -62,65 +75,70 @@ export async function summarizeText(text: string): Promise<SummaryResult> {
 }
 
 export async function summarizeVideo(videoUrl: string, videoTitle?: string, authorName?: string): Promise<SummaryResult> {
-  // Robust regex to extract YouTube Video ID
   const videoIdMatch = videoUrl.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/);
   const videoId = videoIdMatch ? videoIdMatch[1] : null;
   
-  // High Quality Search Queries
-  // If we have the Title (from oEmbed), we search for the specific content topic.
   const searchQueries = [];
   
   if (videoTitle) {
-      searchQueries.push(`"${videoTitle}" youtube video summary`);
-      searchQueries.push(`"${videoTitle}" ${authorName || ''} lyrics meaning plot`);
-      searchQueries.push(`"${videoTitle}" review analysis`);
-  } else if (videoId) {
-      searchQueries.push(`site:youtube.com "${videoId}"`);
-      searchQueries.push(`"${videoId}" video content`);
+      searchQueries.push(`"${videoTitle}" ${authorName || ''} full content details`);
+      searchQueries.push(`"${videoTitle}" step-by-step breakdown`);
+      searchQueries.push(`"${videoTitle}" comprehensive review analysis`);
+      searchQueries.push(`"${videoTitle}" video transcript summary`);
   }
+  
+  if (videoId) {
+      searchQueries.push(`site:youtube.com "${videoId}"`);
+      searchQueries.push(`"${videoId}" video detailed content`);
+  }
+  
   searchQueries.push(videoUrl);
 
   const prompt = `
-    You are an expert video content analyst.
+    You are an Expert Content Analyst and Documentarian.
     
-    TARGET VIDEO:
-    URL: ${videoUrl}
-    ${videoId ? `ID: ${videoId}` : ''}
-    ${videoTitle ? `TITLE: "${videoTitle}"` : ''}
-    ${authorName ? `CHANNEL/ARTIST: "${authorName}"` : ''}
-    
-    TASK: Generate a comprehensive summary document of the video content.
-    
-    CRITICAL INSTRUCTION - CONTENT RECOGNITION:
-    1.  **SEARCH**: Use the 'googleSearch' tool to gather details. Queries: ${searchQueries.join(', ')}
-    2.  **VERIFY TITLE**: 
-        ${videoTitle ? `We know the video title is "${videoTitle}". ensure your summary matches this specific topic.` : 'First, identify the exact video title from the search results.'}
-    3.  **HANDLE CONTENT TYPES**:
-        - **Music Video (MV)**: If the video is a song (e.g., Jay Chou, Pop Music), you **MUST** summarize the **Story/Plot told in the visual music video** AND the **Meaning/Lyrics** of the song. Do not complain about missing transcripts.
-        - **Vlog/News/Tech**: Summarize the spoken content and visual demonstrations.
-    4.  **FALLBACK**: If you find the video title/artist in search results, use that information to construct the summary even if you cannot "watch" the video directly.
+    TARGET CONTENT:
+    - URL: ${videoUrl}
+    - ID: ${videoId || 'Unknown'}
+    - KNOWN TITLE: ${videoTitle || 'Unknown'}
+    - AUTHOR: ${authorName || 'Unknown'}
+
+    YOUR MISSION:
+    Find the *actual content* of this video and record it in extreme detail. 
+    I need a "Detailed Content Record" that acts like a written record of everything that happens in the video.
+
+    INVESTIGATION PLAN (EXECUTE VIA GOOGLE SEARCH):
+    1.  **EXECUTE SEARCHES**: Use queries to find transcripts, reviews, or deep-dives into this specific video.
+    2.  **RECORD**: Reconstruct the video's sequence as accurately as possible.
+    3.  **SYNTHESIZE**: Write a high-fidelity bilingual document.
 
     ${COMMON_PROMPT_INSTRUCTIONS}
   `;
 
   try {
     const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3-pro-preview',
         contents: prompt,
         config: {
           tools: [{ googleSearch: {} }],
+          safetySettings: [
+            { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+            { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+            { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+            { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+          ],
         },
     });
 
-    const text = response.text || "No summary generated.";
+    const text = response.text;
 
-    // Check for failure patterns
-    const lowerText = text.toLowerCase();
-    if (lowerText.includes("error: video_not_found") || (lowerText.includes("unable to") && text.length < 100)) {
-         throw new Error("Unable to identify the video content. It might be private or blocked.");
+    if (!text) {
+        return { 
+            text: "# Analysis Unavailable\n\nWe could not generate a summary at this time.", 
+            sources: [] 
+        };
     }
     
-    // Extract sources
     const chunks = (response.candidates?.[0]?.groundingMetadata?.groundingChunks || []) as any[];
     const sources: string[] = chunks
       .map((chunk: any) => chunk.web?.uri)
@@ -131,6 +149,6 @@ export async function summarizeVideo(videoUrl: string, videoTitle?: string, auth
     return { text, sources: uniqueSources };
   } catch (error: any) {
     console.error("Error calling Gemini API:", error);
-    throw new Error(error.message || "The AI service failed to generate a summary.");
+    throw new Error("AI analysis failed. Please ensure the link is public and accessible.");
   }
 }
