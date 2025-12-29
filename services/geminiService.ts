@@ -1,5 +1,5 @@
 
-import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
+import { GoogleGenAI, HarmCategory, HarmBlockThreshold, Modality } from "@google/genai";
 
 if (!process.env.API_KEY) {
     throw new Error("API_KEY environment variable not set");
@@ -108,7 +108,7 @@ export async function summarizeVideo(videoUrl: string, videoTitle?: string, auth
     I need a "Detailed Content Record" that acts like a written record of everything that happens in the video.
 
     INVESTIGATION PLAN (EXECUTE VIA GOOGLE SEARCH):
-    1.  **EXECUTE SEARCHES**: Use queries to find transcripts, reviews, or deep-dives into this specific video.
+    1.  **EXECUTE SEARCHES**: Use queries to find transcripts, reviews, or deep-dive into this specific video.
     2.  **RECORD**: Reconstruct the video's sequence as accurately as possible.
     3.  **SYNTHESIZE**: Write a high-fidelity bilingual document.
 
@@ -150,5 +150,43 @@ export async function summarizeVideo(videoUrl: string, videoTitle?: string, auth
   } catch (error: any) {
     console.error("Error calling Gemini API:", error);
     throw new Error("AI analysis failed. Please ensure the link is public and accessible.");
+  }
+}
+
+/**
+ * Generates speech for the given text using Gemini TTS.
+ * If isLiteral is true, it reads the text exactly as provided.
+ */
+export async function generateSpeech(text: string, isLiteral: boolean = false): Promise<string> {
+  const sourceText = text.slice(0, 3000);
+
+  const instruction = isLiteral 
+    ? `Read the following text exactly as written, clearly and naturally: ${sourceText}`
+    : `Read aloud a concise summary of this content in BOTH English and Chinese. Structure: First read a short English overview, then immediately read its Chinese translation. Keep the total duration under 90 seconds. Content: ${sourceText}`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash-preview-tts",
+      contents: [{ 
+        parts: [{ text: instruction }] 
+      }],
+      config: {
+        responseModalities: [Modality.AUDIO],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: { voiceName: 'Kore' },
+          },
+        },
+      },
+    });
+
+    const audioData = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    if (!audioData) {
+      throw new Error("No audio data returned from Gemini");
+    }
+    return audioData;
+  } catch (error) {
+    console.error("TTS Generation Error:", error);
+    throw error;
   }
 }

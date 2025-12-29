@@ -1,8 +1,11 @@
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { CopyIcon } from './icons/CopyIcon';
 import { CheckIcon } from './icons/CheckIcon';
+import { SpeakerIcon } from './icons/SpeakerIcon';
 import { VideoMetadata } from '../services/oembedService';
+import { generateSpeech } from '../services/geminiService';
+import { playRawPcm, stopPlayback } from '../services/audioService';
 
 interface SummaryDisplayProps {
   summary: string;
@@ -12,6 +15,10 @@ interface SummaryDisplayProps {
 
 export const SummaryDisplay: React.FC<SummaryDisplayProps> = ({ summary, sources, metadata }) => {
   const [copied, setCopied] = useState(false);
+  const [isFullReading, setIsFullReading] = useState(false);
+  const [isTtsLoading, setIsTtsLoading] = useState(false);
+  const [readingIndex, setReadingIndex] = useState<number | null>(null);
+  const [loadingIndex, setLoadingIndex] = useState<number | null>(null);
 
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(summary).then(() => {
@@ -19,6 +26,49 @@ export const SummaryDisplay: React.FC<SummaryDisplayProps> = ({ summary, sources
       setTimeout(() => setCopied(false), 2000);
     });
   }, [summary]);
+
+  const readText = async (text: string, index: number | 'full') => {
+    // If clicking same thing while playing, stop it.
+    if (readingIndex === index || (index === 'full' && isFullReading)) {
+        stopPlayback();
+        setReadingIndex(null);
+        setIsFullReading(false);
+        return;
+    }
+
+    stopPlayback();
+    setReadingIndex(null);
+    setIsFullReading(false);
+    
+    if (index === 'full') setIsTtsLoading(true);
+    else setLoadingIndex(index);
+
+    try {
+      const audioBase64 = await generateSpeech(text, index !== 'full');
+      
+      if (index === 'full') {
+          setIsTtsLoading(false);
+          setIsFullReading(true);
+      } else {
+          setLoadingIndex(null);
+          setReadingIndex(index);
+      }
+      
+      await playRawPcm(audioBase64);
+      
+      if (index === 'full') setIsFullReading(false);
+      else setReadingIndex(null);
+    } catch (error) {
+      console.error("TTS Failed:", error);
+      setIsTtsLoading(false);
+      setLoadingIndex(null);
+      setReadingIndex(null);
+      setIsFullReading(false);
+      alert("语音生成失败，请稍后再试。");
+    }
+  };
+
+  const handleFullReadAloud = () => readText(summary, 'full');
   
   const parseBold = (text: string) => {
     const parts = text.split(/(\*\*.*?\*\*)/g);
@@ -31,37 +81,69 @@ export const SummaryDisplay: React.FC<SummaryDisplayProps> = ({ summary, sources
   };
 
   const renderSummary = (text: string) => {
-    return text.split('\n').map((line, index) => {
+    return text.split('\n').filter(line => line.trim() !== '').map((line, index) => {
+      const isReading = readingIndex === index;
+      const isLoading = loadingIndex === index;
+      
+      const commonClasses = `group relative cursor-pointer rounded-lg transition-all duration-300 px-3 -mx-3 py-1 hover:bg-white/5 border border-transparent ${
+        isReading ? 'bg-red-500/10 border-red-500/30 ring-1 ring-red-500/20' : ''
+      } ${isLoading ? 'opacity-50 animate-pulse' : ''}`;
+
+      const speakerOverlay = (
+        <div className={`absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-2 bg-gray-900/80 backdrop-blur px-2 py-1 rounded border border-gray-700 pointer-events-none shadow-xl`}>
+             <SpeakerIcon className="w-3 h-3 text-red-400" />
+             <span className="text-[10px] font-bold text-gray-300 uppercase">Click to Read</span>
+        </div>
+      );
+
       if (line.startsWith('## ')) {
         const title = line.substring(3);
         const isDetailedRecord = title.includes('Detailed Content Record') || title.includes('详细内容实录');
         return (
-            <div key={index} className={`mt-10 mb-6 border-l-4 ${isDetailedRecord ? 'border-orange-500' : 'border-red-500'} pl-4 py-1`}>
+            <div key={index} 
+                 onClick={() => readText(line, index)}
+                 className={`${commonClasses} mt-10 mb-6 border-l-4 ${isDetailedRecord ? 'border-orange-500' : 'border-red-500'} pl-4 py-1`}>
                 <h2 className={`text-xl sm:text-2xl font-bold ${isDetailedRecord ? 'text-orange-100' : 'text-white'} tracking-wide`}>
                     {parseBold(title)}
                 </h2>
+                {speakerOverlay}
             </div>
         );
       }
       if (line.startsWith('# ')) {
-        return <h1 key={index} className="text-2xl sm:text-4xl font-extrabold mt-8 mb-4 text-transparent bg-clip-text bg-gradient-to-r from-white via-gray-100 to-gray-400">{parseBold(line.substring(2))}</h1>;
+        return (
+            <div key={index} 
+                 onClick={() => readText(line, index)}
+                 className={commonClasses}>
+                <h1 className="text-2xl sm:text-4xl font-extrabold mt-8 mb-4 text-transparent bg-clip-text bg-gradient-to-r from-white via-gray-100 to-gray-400">
+                    {parseBold(line.substring(2))}
+                </h1>
+                {speakerOverlay}
+            </div>
+        );
       }
       if (line.startsWith('* ') || line.startsWith('- ')) {
         return (
-            <li key={index} className="ml-4 pl-2 list-none relative mb-3 text-gray-300">
+            <li key={index} 
+                onClick={() => readText(line, index)}
+                className={`${commonClasses} ml-4 pl-2 list-none relative mb-3 text-gray-300`}>
                 <span className="absolute left-[-1.5rem] top-[0.6rem] w-1.5 h-1.5 bg-red-500 rounded-full"></span>
                 <span className="leading-relaxed">{parseBold(line.substring(2))}</span>
+                {speakerOverlay}
             </li>
         );
       }
-      if (line.trim() === '') {
-        return <div key={index} className="h-2"></div>;
-      }
+      
       const isChinese = /[\u4e00-\u9fa5]/.test(line);
       return (
-        <p key={index} className={`my-3 leading-8 ${isChinese ? 'text-gray-400 text-base font-light' : 'text-gray-200 text-lg'}`}>
-            {parseBold(line)}
-        </p>
+        <div key={index} 
+             onClick={() => readText(line, index)}
+             className={commonClasses}>
+            <p className={`my-3 leading-8 ${isChinese ? 'text-gray-400 text-base font-light' : 'text-gray-200 text-lg'}`}>
+                {parseBold(line)}
+            </p>
+            {speakerOverlay}
+        </div>
       );
     });
   };
@@ -106,20 +188,44 @@ export const SummaryDisplay: React.FC<SummaryDisplayProps> = ({ summary, sources
              <div className="w-3 h-3 rounded-full bg-red-500/80 animate-pulse"></div>
              <div className="w-3 h-3 rounded-full bg-yellow-500/80"></div>
              <div className="w-3 h-3 rounded-full bg-green-500/80"></div>
-             <span className="ml-3 text-xs font-mono text-gray-500 uppercase tracking-widest">Detailed Bilingual Record</span>
+             <span className="ml-3 text-[10px] font-mono text-gray-500 uppercase tracking-widest hidden sm:inline">
+                Click text to read specific part
+             </span>
            </div>
            
-           <button
-             onClick={handleCopy}
-             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 border ${
-                 copied 
-                 ? 'bg-green-900/30 border-green-700 text-green-400' 
-                 : 'bg-gray-800 border-gray-600 text-gray-300 hover:bg-gray-700 hover:text-white'
-             }`}
-           >
-             {copied ? <CheckIcon className="h-4 w-4" /> : <CopyIcon className="h-4 w-4" />}
-             {copied ? 'Copied' : 'Copy Text'}
-           </button>
+           <div className="flex items-center gap-3">
+             <button
+               onClick={handleFullReadAloud}
+               disabled={isTtsLoading}
+               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 border ${
+                   isFullReading 
+                   ? 'bg-red-900/30 border-red-700 text-red-400 ring-2 ring-red-500/20' 
+                   : 'bg-gray-800 border-gray-600 text-gray-300 hover:bg-gray-700 hover:text-white'
+               } disabled:opacity-50`}
+             >
+               {isTtsLoading ? (
+                 <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
+                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                 </svg>
+               ) : (
+                 <SpeakerIcon className={`h-4 w-4 ${isFullReading ? 'animate-pulse' : ''}`} />
+               )}
+               {isTtsLoading ? 'Generating...' : isFullReading ? 'Stop Reading' : 'Full Summary'}
+             </button>
+
+             <button
+               onClick={handleCopy}
+               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 border ${
+                   copied 
+                   ? 'bg-green-900/30 border-green-700 text-green-400' 
+                   : 'bg-gray-800 border-gray-600 text-gray-300 hover:bg-gray-700 hover:text-white'
+               }`}
+             >
+               {copied ? <CheckIcon className="h-4 w-4" /> : <CopyIcon className="h-4 w-4" />}
+               {copied ? 'Copied' : 'Copy Text'}
+             </button>
+           </div>
         </div>
 
         {/* Content Area */}
