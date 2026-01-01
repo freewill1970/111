@@ -1,5 +1,5 @@
 
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback } from 'react';
 import { CopyIcon } from './icons/CopyIcon';
 import { CheckIcon } from './icons/CheckIcon';
 import { SpeakerIcon } from './icons/SpeakerIcon';
@@ -28,7 +28,7 @@ export const SummaryDisplay: React.FC<SummaryDisplayProps> = ({ summary, sources
   }, [summary]);
 
   const readText = async (text: string, index: number | 'full') => {
-    // If clicking same thing while playing, stop it.
+    // Stop current playback immediately if clicking the same thing
     if (readingIndex === index || (index === 'full' && isFullReading)) {
         stopPlayback();
         setReadingIndex(null);
@@ -36,16 +36,21 @@ export const SummaryDisplay: React.FC<SummaryDisplayProps> = ({ summary, sources
         return;
     }
 
+    // Prepare for new playback
     stopPlayback();
     setReadingIndex(null);
     setIsFullReading(false);
     
+    // Immediate UI feedback
     if (index === 'full') setIsTtsLoading(true);
     else setLoadingIndex(index);
 
     try {
-      const audioBase64 = await generateSpeech(text, index !== 'full');
+      // Stripping markdown for cleaner TTS
+      const cleanText = text.replace(/[*_#]/g, '');
+      const audioBase64 = await generateSpeech(cleanText, index !== 'full');
       
+      // Update states once audio is ready
       if (index === 'full') {
           setIsTtsLoading(false);
           setIsFullReading(true);
@@ -56,6 +61,7 @@ export const SummaryDisplay: React.FC<SummaryDisplayProps> = ({ summary, sources
       
       await playRawPcm(audioBase64);
       
+      // Reset after playback ends
       if (index === 'full') setIsFullReading(false);
       else setReadingIndex(null);
     } catch (error) {
@@ -64,12 +70,9 @@ export const SummaryDisplay: React.FC<SummaryDisplayProps> = ({ summary, sources
       setLoadingIndex(null);
       setReadingIndex(null);
       setIsFullReading(false);
-      alert("语音生成失败，请稍后再试。");
     }
   };
 
-  const handleFullReadAloud = () => readText(summary, 'full');
-  
   const parseBold = (text: string) => {
     const parts = text.split(/(\*\*.*?\*\*)/g);
     return parts.map((part, index) => {
@@ -86,13 +89,22 @@ export const SummaryDisplay: React.FC<SummaryDisplayProps> = ({ summary, sources
       const isLoading = loadingIndex === index;
       
       const commonClasses = `group relative cursor-pointer rounded-lg transition-all duration-300 px-3 -mx-3 py-1 hover:bg-white/5 border border-transparent ${
-        isReading ? 'bg-red-500/10 border-red-500/30 ring-1 ring-red-500/20' : ''
-      } ${isLoading ? 'opacity-50 animate-pulse' : ''}`;
+        isReading ? 'bg-red-500/10 border-red-500/30 ring-1 ring-red-500/20 shadow-lg shadow-red-500/5' : ''
+      } ${isLoading ? 'opacity-70 bg-orange-500/5 border-orange-500/20' : ''}`;
 
       const speakerOverlay = (
-        <div className={`absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-2 bg-gray-900/80 backdrop-blur px-2 py-1 rounded border border-gray-700 pointer-events-none shadow-xl`}>
-             <SpeakerIcon className="w-3 h-3 text-red-400" />
-             <span className="text-[10px] font-bold text-gray-300 uppercase">Click to Read</span>
+        <div className={`absolute right-4 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-2 bg-gray-900/90 backdrop-blur px-2 py-1 rounded border border-gray-700 pointer-events-none shadow-xl z-20`}>
+             {isLoading ? (
+                <svg className="animate-spin h-3 w-3 text-orange-400" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                </svg>
+             ) : (
+                <SpeakerIcon className={`h-3 w-3 ${isReading ? 'text-red-400 animate-pulse' : 'text-gray-400'}`} />
+             )}
+             <span className="text-[10px] font-bold text-gray-300 uppercase">
+               {isLoading ? 'Preparing...' : isReading ? 'Playing' : 'Click to Read'}
+             </span>
         </div>
       );
 
@@ -150,7 +162,7 @@ export const SummaryDisplay: React.FC<SummaryDisplayProps> = ({ summary, sources
 
   return (
     <div className="mt-12 animate-slide-up">
-      {/* Video Metadata Verification Header */}
+      {/* Video Metadata Header */}
       {metadata && (
         <div className="mb-6 flex flex-col sm:flex-row items-center gap-6 bg-gray-900/50 p-4 rounded-2xl border border-gray-800">
             {metadata.thumbnail_url && (
@@ -179,7 +191,7 @@ export const SummaryDisplay: React.FC<SummaryDisplayProps> = ({ summary, sources
         </div>
       )}
 
-      {/* Card Container */}
+      {/* Main Content Card */}
       <div className="bg-gray-800/80 backdrop-blur-sm border border-gray-700/50 rounded-2xl shadow-2xl overflow-hidden ring-1 ring-white/5">
         
         {/* Toolbar */}
@@ -189,13 +201,13 @@ export const SummaryDisplay: React.FC<SummaryDisplayProps> = ({ summary, sources
              <div className="w-3 h-3 rounded-full bg-yellow-500/80"></div>
              <div className="w-3 h-3 rounded-full bg-green-500/80"></div>
              <span className="ml-3 text-[10px] font-mono text-gray-500 uppercase tracking-widest hidden sm:inline">
-                Click text to read specific part
+                Click any paragraph to start reading
              </span>
            </div>
            
            <div className="flex items-center gap-3">
              <button
-               onClick={handleFullReadAloud}
+               onClick={() => readText(summary, 'full')}
                disabled={isTtsLoading}
                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 border ${
                    isFullReading 

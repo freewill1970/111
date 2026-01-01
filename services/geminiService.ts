@@ -155,14 +155,16 @@ export async function summarizeVideo(videoUrl: string, videoTitle?: string, auth
 
 /**
  * Generates speech for the given text using Gemini TTS.
- * If isLiteral is true, it reads the text exactly as provided.
+ * Optimizes latency by minimizing prompt instructions and limiting text input.
  */
 export async function generateSpeech(text: string, isLiteral: boolean = false): Promise<string> {
-  const sourceText = text.slice(0, 3000);
+  // Keep text short for click-to-read to reduce latency significantly
+  const sourceText = text.slice(0, isLiteral ? 800 : 1500);
 
+  // Use extremely concise instructions to reduce model "thinking" before starting generation
   const instruction = isLiteral 
-    ? `Read the following text exactly as written, clearly and naturally: ${sourceText}`
-    : `Read aloud a concise summary of this content in BOTH English and Chinese. Structure: First read a short English overview, then immediately read its Chinese translation. Keep the total duration under 90 seconds. Content: ${sourceText}`;
+    ? `Speak: ${sourceText}`
+    : `Summary: ${sourceText}`;
 
   try {
     const response = await ai.models.generateContent({
